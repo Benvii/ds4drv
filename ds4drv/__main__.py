@@ -3,6 +3,7 @@ import signal
 
 from threading import Thread, Event
 
+from ds4drv.devicepipe import DevicePipe
 from .actions import ActionRegistry
 from .backends import BluetoothBackend, HidrawBackend
 from .config import load_options
@@ -190,40 +191,43 @@ def main():
         thread = create_controller_thread(index + 1, controller_options, disconnect_device_event=disconnect_device_event)
         threads.append(thread)
 
-    for device in backend.devices:
-        connected_devices = []
-        for thread in threads:
-            # Controller has received a fatal error, exit
-            if thread.controller.error:
-                sys.exit(1)
+    notif_pipe = DevicePipe()
+    with notif_pipe as device_notif_pipe:
+        for device in backend.devices:
+            connected_devices = []
+            for thread in threads:
+                # Controller has received a fatal error, exit
+                if thread.controller.error:
+                    sys.exit(1)
 
-            if thread.controller.device:
-                connected_devices.append(thread.controller.device.device_addr)
+                if thread.controller.device:
+                    connected_devices.append(thread.controller.device.device_addr)
 
-            # Clean up dynamic threads
-            if not thread.is_alive():
-                threads.remove(thread)
+                # Clean up dynamic threads
+                if not thread.is_alive():
+                    threads.remove(thread)
 
-        if device.device_addr in connected_devices:
-            backend.logger.warning("Ignoring already connected device: {0}",
-                                   device.device_addr)
-            continue
+            if device.device_addr in connected_devices:
+                backend.logger.warning("Ignoring already connected device: {0}",
+                                       device.device_addr)
+                continue
 
-        for thread in filter(lambda t: not t.controller.device, threads):
-            break
-        else:
-            thread = create_controller_thread(len(threads) + 1,
-                                              options.default_controller,
-                                              dynamic=True,
-                                              disconnect_device_event=disconnect_device_event)
-            threads.append(thread)
+            for thread in filter(lambda t: not t.controller.device, threads):
+                break
+            else:
+                thread = create_controller_thread(len(threads) + 1,
+                                                  options.default_controller,
+                                                  dynamic=True,
+                                                  disconnect_device_event=disconnect_device_event)
+                threads.append(thread)
 
-        thread.controller.setup_device(device)
-        connected_devices.append(device)
+            thread.controller.setup_device(device)
+            connected_devices.append(device)
+            device_notif_pipe.append(device)  # Notify local apps that a new device is added
 
-        if options.controller_limit and len(connected_devices) >= options.controller_limit:
-            # We have reached the defined controller limit, we now need to wait until a device is disconnected
-            disconnect_device_event.wait()
+            if options.controller_limit and len(connected_devices) >= options.controller_limit:
+                # We have reached the defined controller limit, we now need to wait until a device is disconnected
+                disconnect_device_event.wait()
 
 if __name__ == "__main__":
     main()
